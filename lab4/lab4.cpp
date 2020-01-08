@@ -19,14 +19,14 @@ void printMatrix(int n, int m, int* matrix)
 	cout << endl;
 }
 
-void generateSimpleMatrix(int n, int m, int* matrix)
+void generateSimpleMatrixWithI(int n, int m, int* matrix)
 {
 	for (int i = 0; i < m; i++)
 		for (int j = 0; j < n; j++)
 			matrix[n * i + j] = i;
 }
 
-void generateSimplematrixB(int n, int m, int* matrix)
+void generateSimpleMatrixWithJ(int n, int m, int* matrix)
 {
 	for (int i = 0; i < m; i++)
 		for (int j = 0; j < n; j++)
@@ -76,8 +76,8 @@ int main(int argc, char *argv[])
 			}
 			else
 			{
-				generateSimpleMatrix(n, n, matrixA);
-				generateSimplematrixB(n, n, matrixB);
+				generateSimpleMatrixWithI(n, n, matrixA);
+				generateSimpleMatrixWithJ(n, n, matrixB);
 			}
 			
 			if (n < 100)
