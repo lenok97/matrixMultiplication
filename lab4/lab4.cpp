@@ -45,6 +45,7 @@ int main(int argc, char *argv[])
 	int rank, size;
 	double endTime, startTime;
 	bool randomMatrix = false;
+	MPI_Status Status;
 	MPI_Init(&argc, &argv);
 	MPI_Comm_size(MPI_COMM_WORLD, &size);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -117,10 +118,10 @@ int main(int argc, char *argv[])
 		if (rank < extraWork)
 			rowsCount++;
 		int* partA = new int[rowsCount * n];
-
+		int* partB = new int[rowsCount * n];
 		// разбивает сообщение из буфера посылки процесса root на части
 		MPI_Scatterv(matrixA, sendcounts, senddispls, MPI_INT, partA, rowsCount * n, MPI_INT, root, MPI_COMM_WORLD);
-		
+		MPI_Scatterv(matrixB, sendcounts, senddispls, MPI_INT, partB, rowsCount * n, MPI_INT, root, MPI_COMM_WORLD);
 		if (rank == root)
 		{
 			delete[] sendcounts;
@@ -130,17 +131,47 @@ int main(int argc, char *argv[])
 		
 		int* partC = new int[rowsCount*n];
 		for (int row = 0; row < rowsCount; row++)
-		{
-			for (int j = 0; j < n; j++)
+			for (int j = 0; j < rowsCount; j++)
 			{
 				partC[row * n + j] = 0;
 				for (int k = 0; k < n; k++)
 				{
-					partC[row * n + j] += partA[row * n + k] * matrixB[k * n + j];;
+					partC[row * n + j] += partA[row * n + k] * matrixB[k * n + j];
 				}
 			}
+		int nextProc, prevProc, ind;
+		for (int p = 0; p < size; p++)
+		{
+			nextProc = rank + 1;
+			if (rank == size - 1)
+				nextProc = 0;
+			prevProc = rank - 1;
+			if (rank == 0)
+				prevProc = size - 1;
+
+			int bufSize = rowsCount * n;
+			//if (nextProc >= extraWork && rank < extraWork)
+			//	bufSize = (rowsCount-1 )* n;
+			//выполнения сдвига по цепи процессов
+			MPI_Sendrecv_replace(partB, bufSize, MPI_INT, nextProc, 0, prevProc, 0, MPI_COMM_WORLD, &Status);
+
+			//int temp = 0;
+			//for (int i = 0; i < workPerProc; i++)
+			//{
+			//	for (int j= 0; j < workPerProc; j++)
+			//	{
+			//		for (int k= 0; k < n; k++) 
+			//			temp += partA[i*n + k] * partB[j*n + k];
+			//		if (rank - p >= 0)
+			//			ind = rank - p;
+			//		else 
+			//			ind = (rank - p + rank);
+			//		partC[i*n + j + ind * workPerProc] = temp;
+			//		temp = 0;
+			//	}
+			//}
 		}
-		
+
 		// собирает блоки с разным числом элементов от каждого процесса
 		MPI_Gatherv(partC, rowsCount*n, MPI_INT, matrixC, recvcounts, recvdispls, MPI_INT, root, MPI_COMM_WORLD);
 		delete[] partA;
