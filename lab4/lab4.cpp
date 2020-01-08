@@ -18,16 +18,6 @@ void printMatrix(int n, int m, int* matrix)
 	}
 	cout << endl;
 }
-//void printTransponentMatrix(int n, int m, int* matrix)
-//{
-//	for (int j = 0; j < n; j++)
-//	{
-//		for (int i = 0; i < m; i++)
-//			cout << matrix[n * i + j] << '\t';
-//		cout << endl;
-//	}
-//	cout << endl;
-//}
 
 void generateSimpleMatrix(int n, int m, int* matrix)
 {
@@ -36,7 +26,7 @@ void generateSimpleMatrix(int n, int m, int* matrix)
 			matrix[n * i + j] = i;
 }
 
-void generateSimpleMatrix2(int n, int m, int* matrix)
+void generateSimplematrixB(int n, int m, int* matrix)
 {
 	for (int i = 0; i < m; i++)
 		for (int j = 0; j < n; j++)
@@ -50,18 +40,6 @@ void generateRandomMatrix(int n, int m, int* matrix)
 			matrix[n * i + j] = rand() % 100;
 }
 
-void transpMatrix(int n, int* inmatrix)
-{
-	int temp;
-	for (int i = 0; i < n-1; i++)
-		for (int j=i; j<n; j++)
-		{
-			temp = inmatrix[n*j+i];
-			inmatrix[n*j + i] = inmatrix[n*i + j];
-			inmatrix[n*i + j] = temp;
-		}
-}
-
 int main(int argc, char *argv[])
 {
 	int rank, size;
@@ -73,9 +51,9 @@ int main(int argc, char *argv[])
 	while (true)
 	{
 		int n, workPerProc, extraWork, rowsCount;
-		int* matrix1 = NULL;
-		int* matrix2 = NULL;
-		int* result = NULL;
+		int* matrixA = NULL;
+		int* matrixB = NULL;
+		int* matrixC = NULL;
 		// MPI_Scatterv/MPI_Gatherv params
 		int* sendcounts = new int[size]; //количество элементов, принимаемых от каждого процесса
 		int* senddispls = new int[size]; //начало расположения элементов блока, посылаемого i-му процессу
@@ -84,35 +62,32 @@ int main(int argc, char *argv[])
 
 		if (rank == root)
 		{
-			cout << "Matrix multiplication" << endl << "Process count = " << size << endl;
+			cout << "Matrix multiplication C=A*B" << endl << "Process count = " << size << endl;
 			cout << "Enter n:" << endl;
 			cin >> n;
 
-			matrix1 = new int[n*n];
-			matrix2 = new int[n*n];
+			matrixA = new int[n*n];
+			matrixB = new int[n*n];
 
 			if (randomMatrix)
 			{
-				generateRandomMatrix(n, n, matrix1);
-				generateRandomMatrix(n, n, matrix2);
+				generateRandomMatrix(n, n, matrixA);
+				generateRandomMatrix(n, n, matrixB);
 			}
 			else
 			{
-				generateSimpleMatrix(n, n, matrix1);
-				generateSimpleMatrix2(n, n, matrix2);
+				generateSimpleMatrix(n, n, matrixA);
+				generateSimplematrixB(n, n, matrixB);
 			}
 			
 			if (n < 100)
 			{
-				cout << "matrix 1:" << endl;
-				printMatrix(n, n, matrix1);
-				cout << "matrix 2:" << endl;
-				printMatrix(n, n, matrix2);
+				cout << "matrix A:" << endl;
+				printMatrix(n, n, matrixA);
+				cout << "matrix B:" << endl;
+				printMatrix(n, n, matrixB);
 			}
 			startTime = MPI_Wtime();
-			transpMatrix(n, matrix2);
-			cout << "trans matrix 2:" << endl;
-			printMatrix(n, n, matrix2);
 
 			workPerProc = n / size;
 			extraWork = n % size;;
@@ -128,63 +103,58 @@ int main(int argc, char *argv[])
 				senddispls[i] = t2 * n;
 				totalDispl += t1;
 			}
-			result = new int[n*n];
+			matrixC = new int[n*n];
 		}
 
-		MPI_Bcast(&n, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
+		MPI_Bcast(&n, 1, MPI_INT, root, MPI_COMM_WORLD);
+		if (rank!=root)
+			matrixB=new int[n*n];
+		MPI_Bcast(matrixB, n*n, MPI_INT, root, MPI_COMM_WORLD); // это плохо
 		// горизонтаальное ленточное разбиение
 		workPerProc = n / size;
 		extraWork = n % size;
 		rowsCount = workPerProc;
 		if (rank < extraWork)
 			rowsCount++;
-		int* matrixPart1 = new int[rowsCount * n];
-		int* matrixPart2 = new int[rowsCount * n];
+		int* partA = new int[rowsCount * n];
+
 		// разбивает сообщение из буфера посылки процесса root на части
-		MPI_Scatterv(matrix1, sendcounts, senddispls, MPI_INT, matrixPart1, rowsCount * n, MPI_INT, root, MPI_COMM_WORLD);
-		MPI_Scatterv(matrix2, sendcounts, senddispls, MPI_INT, matrixPart2, rowsCount * n, MPI_INT, root, MPI_COMM_WORLD);
+		MPI_Scatterv(matrixA, sendcounts, senddispls, MPI_INT, partA, rowsCount * n, MPI_INT, root, MPI_COMM_WORLD);
+		
 		if (rank == root)
 		{
 			delete[] sendcounts;
 			delete[] senddispls;
-			delete[] matrix1;
-			delete[] matrix2;
+			delete[] matrixA;
 		}
-		cout << rank << ": m1 ";
-		printMatrix(n, rowsCount, matrixPart1);
-		cout << rank << ": m2 ";
-		printMatrix(n, rowsCount, matrixPart2);
-		int* tempResult = new int[rowsCount*n];
+		
+		int* partC = new int[rowsCount*n];
 		for (int row = 0; row < rowsCount; row++)
 		{
 			for (int j = 0; j < n; j++)
 			{
-				tempResult[row * n + j] = 0;
+				partC[row * n + j] = 0;
 				for (int k = 0; k < n; k++)
 				{
-					//tempResult[i] += matrixPart[i *n + j] * vector[j];
-					tempResult[row * n + j] += matrixPart1[row * n + k] * matrixPart2[row * n + j];
-					cout <<rank<<": "<< matrixPart1[row * n + k]<<" * "<< matrixPart2[row * n + j] << endl;
+					partC[row * n + j] += partA[row * n + k] * matrixB[k * n + j];;
 				}
 			}
 		}
-		printMatrix(n, rowsCount, tempResult);
-		MPI_Barrier(MPI_COMM_WORLD);
+		
 		// собирает блоки с разным числом элементов от каждого процесса
-		MPI_Gatherv(tempResult, rowsCount*n, MPI_INT, result, recvcounts, recvdispls, MPI_INT, root, MPI_COMM_WORLD);
-		delete[] matrixPart1;
-		delete[] matrixPart2;
-		delete[] tempResult;
+		MPI_Gatherv(partC, rowsCount*n, MPI_INT, matrixC, recvcounts, recvdispls, MPI_INT, root, MPI_COMM_WORLD);
+		delete[] partA;
+		delete[] partC;
+		delete[] matrixB;
 
 		if (rank == root)
 		{
 			endTime = MPI_Wtime();
-			cout << "result:" << endl;
-			printMatrix(n, n, result);
+			cout << "matrix C:" << endl;
+			printMatrix(n, n, matrixC);
 			delete[] recvcounts;
 			delete[] recvdispls;
-			delete[] result;
+			delete[] matrixC;
 			cout << endl << "Time elapsed: " << (endTime - startTime) * 1000 << "ms\n" << endl;
 			//randomMatrix = !randomMatrix;
 		}
