@@ -108,61 +108,53 @@ int main(int argc, char *argv[])
 				printMatrix(n, n, matrixB);
 			}
 			startTime = MPI_Wtime();
-			//transpMatrix(n, matrixB);
+			transpMatrix(n, matrixB);
+
 			workPerProc = n / size;
-			extraWork = n % size;;
+			max = workPerProc*n;
+			extraWork = n % size;
+			if (extraWork > 0)
+				max+=n;
 			int totalDispl = 0;
 			// Calculate MPI_Scatterv/MPI_Gatherv params
 			for (int i = 0; i < size; i++)
 			{
-				recvcounts[i] = (i < extraWork) ? workPerProc + 1 : workPerProc;  //Накидываем по 1 дополнительной строчке из остатка каждому процессу
+				recvcounts[i] = (i < extraWork) ? workPerProc + 1 : workPerProc; 
 				sendcounts[i] = recvcounts[i] * n; //Определяем сколько элементов массива войдёт в его часть
 				recvdispls[i] = totalDispl; //Определяем начальную строчку передаваемого сообщения
 				senddispls[i] = totalDispl * n; //Определяем начальный элемент передаваемого сообщения
 				start[i] = totalDispl;
 				stop[i] = start[i] + recvcounts[i];
-				totalDispl += recvcounts[i]; // Обновление начальной строчки следующей партии
-
-
-
-				//int t1 = (i < extraWork) ? workPerProc + 1 : workPerProc;
-				//recvcounts[i] = t1 * n;
-				//sendcounts[i] = recvcounts[i] * n;
-				//int t2 = totalDispl;
-				//recvdispls[i] = t2;
-				//senddispls[i] = t2 * n;
-
-				//start[i] = totalDispl;
-				//stop[i] = start[i] + recvcounts[i];
-
-				//totalDispl += t1;
+				totalDispl += recvcounts[i]; 
 			}
+
+			/*for (int i = 0; i < size; ++i)
+				if (recvcounts[i] > max)
+					max = recvcounts[i];
+*/
 			matrixC = new int[n*n];
 		}
 
 		MPI_Bcast(&n, 1, MPI_INT, root, MPI_COMM_WORLD);
-
-		MPI_Bcast(start, size, MPI_INT, 0, MPI_COMM_WORLD);
-		MPI_Bcast(stop, size, MPI_INT, 0, MPI_COMM_WORLD);
+		MPI_Bcast(&max, 1, MPI_INT, root, MPI_COMM_WORLD); 
+		MPI_Bcast(start, size, MPI_INT, root, MPI_COMM_WORLD);
+		MPI_Bcast(stop, size, MPI_INT, root, MPI_COMM_WORLD);
 
 		// горизонтальное ленточное разбиение
 		workPerProc = n / size;
 		extraWork = n % size;
-		int BSize = workPerProc;
-		if (extraWork > 0)
-			BSize++;
 
 		rowsCount = workPerProc;
 		if (rank < extraWork)
 			rowsCount++;
 		int* partA = new int[rowsCount * n];
-		int* partB = new int[BSize * n];
+		int* partB = new int[max * n];
+		int* shiftPart= new int[max * n];
 		int* partC = new int[rowsCount * n];
 		// разбивает сообщение из буфера посылки процесса root на части
 		MPI_Scatterv(matrixA, sendcounts, senddispls, MPI_INT, partA, rowsCount * n, MPI_INT, root, MPI_COMM_WORLD);
-		MPI_Scatterv(matrixB, sendcounts, senddispls, MPI_INT, partB, BSize * n, MPI_INT, root, MPI_COMM_WORLD);
+		MPI_Scatterv(matrixB, sendcounts, senddispls, MPI_INT, partB, max * n, MPI_INT, root, MPI_COMM_WORLD);
 
-		printMatrix(n, workPerProc, partB);
 		//выполнения сдвига по цепи процессов
 		int nextProc, prevProc;
 		nextProc = rank + 1;
@@ -171,12 +163,13 @@ int main(int argc, char *argv[])
 		prevProc = rank - 1;
 		if (rank == 0)
 			prevProc = size - 1;
+
 		for (int p = 0; p < size; p++)
 		{
 			int local_start = start[(p + rank) % size];
 			int local_stop = stop[(p + rank) % size];
-
-			for (int i = 0; i < rowsCount; ++i)
+			printMatrix(n, workPerProc, partB);
+			for (int i = 0; i < rowsCount; i++)
 			{
 				for (int j = local_start; j < local_stop; j++) 
 				{
@@ -184,67 +177,19 @@ int main(int argc, char *argv[])
 					for (int k = 0; k < n; k++)
 					{
 						partC[i * n + j] += partA[i * n + k] * partB[(j - local_start) * n + k];
+						cout << rank << ": " << partB[(j - local_start) * n + k]<<endl;
 					}
 				}
 			}
-			MPI_Sendrecv_replace(partB, BSize * n, MPI_INT, nextProc, shiftTag, prevProc, shiftTag, MPI_COMM_WORLD, &Status);
+			
+			//MPI_Sendrecv_replace(partB, BSize * n, MPI_INT, nextProc, shiftTag, prevProc, shiftTag, MPI_COMM_WORLD, &Status);
+			MPI_Sendrecv(partB, max * n, MPI_INT, prevProc, shiftTag, shiftPart, max * n, MPI_INT, nextProc, shiftTag, MPI_COMM_WORLD, &Status);
+			for (int t = 0; t < max * n; t++)
+				partB[t] = shiftPart[t];
+
 		}
 
-
-
-		//int nextProc, prevProc, ind;
-		//for (int p = 0; p < size; p++)
-		//{
-		//	nextProc = rank + 1;
-		//	if (rank == size - 1)
-		//		nextProc = 0;
-		//	prevProc = rank - 1;
-		//	if (rank == 0)
-		//		prevProc = size - 1;
-
-		//	int bufSize = workPerProc * n;
-
-		//	int* partBsend = new int[bufSize];
-		//	for (int i = 0; i < bufSize; i++)
-		//		partBsend[i] = partB[i];
-
-		//	MPI_Sendrecv_replace(partBsend, bufSize, MPI_INT, nextProc, shiftTag, prevProc, shiftTag, MPI_COMM_WORLD, &Status);
-		//	//MPI_Sendrecv(partBsend, bufSize, MPI_INT, nextProc, shiftTag,
-		//		//partBrecv, bufSize, MPI_INT, prevProc, shiftTag, MPI_COMM_WORLD, &Status);
-		//	
-		//	// modify partB
-		//	if (rank < extraWork)
-		//	{
-		//		for (int i = n * workPerProc; i < rowsCount; i++)
-		//			partB[i] = partB[i - n];
-		//		
-		//		for (int i = 0; i < n*workPerProc; i++)
-		//			partB[i] = partBsend[i];
-		//	}
-		//	delete[] partBsend;
-		//	//printMatrix(n, rowsCount, partC);
-		//	//printMatrix(n, workPerProc, partBsend);
-		//	int sum = 0;
-		//	for (int row = 0; row < rowsCount; row++)
-		//	{
-		//		for (int j= 0; j < rowsCount; j++)
-		//		{
-		//			for (int k = 0; k < n; k++)
-		//			{
-		//				sum += partA[row*n + k] * partB[j*n + k];
-		//			}
-		//			if (rank - p >= 0)
-		//				ind = rank - p;
-		//			else 
-		//				ind = (size - p + rank);
-		//			partC[row*n + j +ind * rowsCount] = sum;
-		//			cout << sum << endl;
-		//			sum = 0;
-		//		}
-		//	}
-		//}
-
-		//printMatrix(n, rowsCount, partC);
+		printMatrix(n, rowsCount, partC);
 
 		// собирает блоки с разным числом элементов от каждого процесса
 		MPI_Gatherv(partC, rowsCount*n, MPI_INT, matrixC, sendcounts,senddispls, MPI_INT, root, MPI_COMM_WORLD);
