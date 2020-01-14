@@ -67,7 +67,7 @@ int main(int argc, char *argv[])
 		int* matrixB = NULL;
 		int* matrixC = NULL;
 		int* start = new int[size];  
-		int* stop = new int[size]; 
+		int* end = new int[size]; 
 		// MPI_Scatterv/MPI_Gatherv params
 		int* sendcounts = new int[size]; //количество элементов, принимаемых от каждого процесса
 		int* senddispls = new int[size]; //начало расположения элементов блока, посылаемого i-му процессу
@@ -115,11 +115,11 @@ int main(int argc, char *argv[])
 				recvcounts[i] =  workPerProc; 
 				if (i < extraWork)
 					recvcounts[i]++;
-				sendcounts[i] = recvcounts[i] * n; //Определяем сколько элементов массива войдёт в его часть
-				recvdispls[i] = totalDispl; //Определяем начальную строчку передаваемого сообщения
-				senddispls[i] = totalDispl * n; //Определяем начальный элемент передаваемого сообщения
+				sendcounts[i] = recvcounts[i] * n; 
+				recvdispls[i] = totalDispl; 
+				senddispls[i] = totalDispl * n; 
 				start[i] = totalDispl;
-				stop[i] = start[i] + recvcounts[i];
+				end[i] = start[i] + recvcounts[i];
 				totalDispl += recvcounts[i]; 
 			}
 			BPartSize = recvcounts[0];
@@ -129,7 +129,7 @@ int main(int argc, char *argv[])
 		MPI_Bcast(&n, 1, MPI_INT, root, MPI_COMM_WORLD);
 		MPI_Bcast(&BPartSize, 1, MPI_INT, root, MPI_COMM_WORLD); 
 		MPI_Bcast(start, size, MPI_INT, root, MPI_COMM_WORLD);
-		MPI_Bcast(stop, size, MPI_INT, root, MPI_COMM_WORLD);
+		MPI_Bcast(end, size, MPI_INT, root, MPI_COMM_WORLD);
 
 		workPerProc = n / size;
 		extraWork = n % size;
@@ -138,12 +138,10 @@ int main(int argc, char *argv[])
 			rowsCount++;
 		int* partA = new int[rowsCount * n];
 		int* partB = new int[BPartSize * n];
-		int* shiftPart= new int[BPartSize * n];
 		int* partC = new int[rowsCount * n];
 		// разбивает сообщение из буфера посылки процесса root на части
 		MPI_Scatterv(matrixA, sendcounts, senddispls, MPI_INT, partA, rowsCount * n, MPI_INT, root, MPI_COMM_WORLD);
 		MPI_Scatterv(matrixB, sendcounts, senddispls, MPI_INT, partB, BPartSize * n, MPI_INT, root, MPI_COMM_WORLD);
-
 		// горизонтальное ленточное разбиение
 		int nextProc, prevProc;
 		nextProc = rank + 1;
@@ -155,8 +153,9 @@ int main(int argc, char *argv[])
 
 		for (int p = 0; p < size; p++)
 		{
-			int startPoint = start[(p + rank) % size];
-			int endPoint = stop[(p + rank) % size];
+			// какая часть B пришла - какой номер элемента итогового массива считаем
+			int startPoint = start[(p + rank) % size]; 
+			int endPoint = end[(p + rank) % size];
 			for (int i = 0; i < rowsCount; i++)
 			{
 				for (int j = startPoint; j < endPoint; j++) 
@@ -167,9 +166,7 @@ int main(int argc, char *argv[])
 				}
 			}
 			//выполнения сдвига по цепи процессов
-			MPI_Sendrecv(partB, BPartSize * n, MPI_INT, prevProc, shiftTag, shiftPart, BPartSize * n, MPI_INT, nextProc, shiftTag, MPI_COMM_WORLD, &Status);
-			for (int i = 0; i < BPartSize * n; i++)
-				partB[i] = shiftPart[i];
+			MPI_Sendrecv_replace(partB, BPartSize * n, MPI_INT, prevProc, shiftTag, nextProc, shiftTag, MPI_COMM_WORLD, &Status);
 		}
 		// собирает блоки с разным числом элементов от каждого процесса
 		MPI_Gatherv(partC, rowsCount*n, MPI_INT, matrixC, sendcounts, senddispls, MPI_INT, root, MPI_COMM_WORLD);
