@@ -62,7 +62,7 @@ int main(int argc, char *argv[])
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	while (true)
 	{
-		int n, workPerProc, extraWork, rowsCount, max=0;
+		int n, workPerProc, extraWork, rowsCount, BPartSize=0;
 		int* matrixA = NULL;
 		int* matrixB = NULL;
 		int* matrixC = NULL;
@@ -122,12 +122,12 @@ int main(int argc, char *argv[])
 				stop[i] = start[i] + recvcounts[i];
 				totalDispl += recvcounts[i]; 
 			}
-			max = recvcounts[0];
+			BPartSize = recvcounts[0];
 			matrixC = new int[n*n];
 		}
 
 		MPI_Bcast(&n, 1, MPI_INT, root, MPI_COMM_WORLD);
-		MPI_Bcast(&max, 1, MPI_INT, root, MPI_COMM_WORLD); 
+		MPI_Bcast(&BPartSize, 1, MPI_INT, root, MPI_COMM_WORLD); 
 		MPI_Bcast(start, size, MPI_INT, root, MPI_COMM_WORLD);
 		MPI_Bcast(stop, size, MPI_INT, root, MPI_COMM_WORLD);
 
@@ -137,12 +137,12 @@ int main(int argc, char *argv[])
 		if (rank < extraWork)
 			rowsCount++;
 		int* partA = new int[rowsCount * n];
-		int* partB = new int[max * n];
-		int* shiftPart= new int[max * n];
+		int* partB = new int[BPartSize * n];
+		int* shiftPart= new int[BPartSize * n];
 		int* partC = new int[rowsCount * n];
 		// разбивает сообщение из буфера посылки процесса root на части
 		MPI_Scatterv(matrixA, sendcounts, senddispls, MPI_INT, partA, rowsCount * n, MPI_INT, root, MPI_COMM_WORLD);
-		MPI_Scatterv(matrixB, sendcounts, senddispls, MPI_INT, partB, max * n, MPI_INT, root, MPI_COMM_WORLD);
+		MPI_Scatterv(matrixB, sendcounts, senddispls, MPI_INT, partB, BPartSize * n, MPI_INT, root, MPI_COMM_WORLD);
 
 		// горизонтальное ленточное разбиение
 		int nextProc, prevProc;
@@ -167,9 +167,9 @@ int main(int argc, char *argv[])
 				}
 			}
 			//выполнения сдвига по цепи процессов
-			MPI_Sendrecv(partB, max * n, MPI_INT, prevProc, shiftTag, shiftPart, max * n, MPI_INT, nextProc, shiftTag, MPI_COMM_WORLD, &Status);
-			for (int t = 0; t < max * n; t++)
-				partB[t] = shiftPart[t];
+			MPI_Sendrecv(partB, BPartSize * n, MPI_INT, prevProc, shiftTag, shiftPart, BPartSize * n, MPI_INT, nextProc, shiftTag, MPI_COMM_WORLD, &Status);
+			for (int i = 0; i < BPartSize * n; i++)
+				partB[i] = shiftPart[i];
 		}
 		// собирает блоки с разным числом элементов от каждого процесса
 		MPI_Gatherv(partC, rowsCount*n, MPI_INT, matrixC, sendcounts, senddispls, MPI_INT, root, MPI_COMM_WORLD);
@@ -177,7 +177,8 @@ int main(int argc, char *argv[])
 		if (rank == root)
 		{
 			endTime = MPI_Wtime();
-			cout << "matrix C:" << endl;
+			cout << "matrix C: ";
+			if (randomMatrix) cout << "(random mode)"; cout << endl;
 			printMatrix(n, n, matrixC);
 			cout << endl << "Time elapsed: " << (endTime - startTime) * 1000 << "ms\n" << endl;
 			randomMatrix = !randomMatrix;
